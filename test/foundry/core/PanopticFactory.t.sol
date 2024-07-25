@@ -23,6 +23,9 @@ import {TickMath} from "v3-core/libraries/TickMath.sol";
 import {PoolAddress} from "v3-periphery/libraries/PoolAddress.sol";
 import {CallbackValidation} from "v3-periphery/libraries/CallbackValidation.sol";
 import {TransferHelper} from "v3-periphery/libraries/TransferHelper.sol";
+import {V3Helper} from "contracts/libraries/V3Helper.sol";
+import {INonfungiblePositionManager} from "@uniswap/v3-periphery/contracts/interfaces/INonfungiblePositionManager.sol";
+import {console2} from "forge-std/console2.sol";
 
 contract PanopticFactoryHarness is PanopticFactory {
     constructor(
@@ -43,50 +46,23 @@ contract PanopticFactoryTest is Test {
     PanopticFactoryHarness panopticFactory;
 
     // Mainnet WETH smart contract address
-    address _WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    address _WETH = 0x67142ed6CF29B07138fca14fD306f9308D63D09f;
+    address _USDC = 0xa1e1f6E12f9Ccd7a1A66a0332A419Bf2a39D3db5;
 
     // Mainnet factory address
-    IUniswapV3Factory V3FACTORY = IUniswapV3Factory(0x1F98431c8aD98523631AE4a59f267346ea31F984);
+    IUniswapV3Factory V3FACTORY = IUniswapV3Factory(0x14d34078f68d07859CF57B25785B923c443DaE71);
 
     // deploy the semiFungiblePositionManager
     SemiFungiblePositionManager sfpm = new SemiFungiblePositionManager(V3FACTORY);
 
-    // store a few different mainnet pairs - the pool used is part of the fuzz
-
-    // 0.01% pools
-    IUniswapV3Pool constant DAI_USDC_1 = IUniswapV3Pool(0x5777d92f208679DB4b9778590Fa3CAB3aC9e2168);
-    IUniswapV3Pool constant USDC_USDT_1 =
-        IUniswapV3Pool(0x3416cF6C708Da44DB2624D63ea0AAef7113527C6);
-
-    // 0.05% pools
-    IUniswapV3Pool constant USDC_WETH_5 =
-        IUniswapV3Pool(0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640);
-    IUniswapV3Pool constant FRAX_USDT_5 =
-        IUniswapV3Pool(0xc2A856c3afF2110c1171B8f942256d40E980C726);
-    IUniswapV3Pool constant ETH_USDT_5 = IUniswapV3Pool(0x11b815efB8f581194ae79006d24E0d814B7697F6);
-
-    // 0.3% pools
-    IUniswapV3Pool constant WBTC_ETH_30 =
-        IUniswapV3Pool(0xCBCdF9626bC03E24f779434178A73a0B4bad62eD);
-    IUniswapV3Pool constant MATIC_ETH_30 =
-        IUniswapV3Pool(0x290A6a7460B308ee3F19023D2D00dE604bcf5B42);
-
-    // 1% pools
-    IUniswapV3Pool constant INCH_USDC_100 =
-        IUniswapV3Pool(0x9feBc984504356225405e26833608b17719c82Ae);
-
     // store in fixed array
-    IUniswapV3Pool[6] public pools = [
-        // currently unsupported
-        // DAI_USDC_1,
-        // USDC_USDT_1,
-        USDC_WETH_5,
-        FRAX_USDT_5,
-        WBTC_ETH_30,
-        MATIC_ETH_30,
-        INCH_USDC_100,
-        ETH_USDT_5
-    ];
+    IUniswapV3Pool[1] public pools;
+
+    IUniswapV3Pool USDC_WETH_5;
+    IUniswapV3Pool USDC_WETH_1;
+
+    INonfungiblePositionManager positionManager =
+        INonfungiblePositionManager(0x3d75b4ba91A21D615f9ac9febf690D9F6a59A612);
 
     // granted token amounts
     uint256 constant INITIAL_MOCK_TOKENS = type(uint256).max;
@@ -115,7 +91,7 @@ contract PanopticFactoryTest is Test {
 
     function _initWorld(uint256 seed) internal {
         // Pick a pool from the seed and cache initial state
-        _initalizeWorldState(pools[bound(seed, 0, pools.length - 1)]);
+        _initalizeWorldState(pools[0]);
     }
 
     function _initalizeWorldState(IUniswapV3Pool _pool) internal {
@@ -145,6 +121,30 @@ contract PanopticFactoryTest is Test {
         IERC20Partial(token1).approve(address(this), INITIAL_MOCK_TOKENS);
     }
 
+    function _createUniPools() public {
+        (address token0, address token1) = V3Helper._sortTokens(_WETH, _USDC);
+
+        USDC_WETH_5 = IUniswapV3Pool(
+            positionManager.createAndInitializePoolIfNecessary(
+                token0,
+                token1,
+                500,
+                V3Helper.encodePriceSqrt(1e18, 1000e18)
+            )
+        );
+
+        USDC_WETH_1 = IUniswapV3Pool(
+            positionManager.createAndInitializePoolIfNecessary(
+                token0,
+                token1,
+                100,
+                V3Helper.encodePriceSqrt(1e18, 1000e18)
+            )
+        );
+
+        pools[0] = USDC_WETH_5;
+    }
+
     function setUp() public {
         // Deploy factory
         panopticFactory = new PanopticFactoryHarness(
@@ -154,6 +154,8 @@ contract PanopticFactoryTest is Test {
             address(new PanopticPool(sfpm)),
             address(new CollateralTracker())
         );
+
+        _createUniPools();
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -260,7 +262,7 @@ contract PanopticFactoryTest is Test {
     function test_Success_deployNewPoolWETH0() public {
         // No need to fuzz as we are testing for a specific condition
         // use pool[7] -> ETH_USDT_5
-        _initalizeWorldState(pools[5]);
+        _initalizeWorldState(pools[0]);
 
         // generate a not so random salt
         uint96 salt = uint96(block.timestamp);
@@ -274,7 +276,7 @@ contract PanopticFactoryTest is Test {
     function test_Success_deployNewPoolToken1() public {
         // No need to fuzz as we are testing for a specific condition
         // use pool[1] -> USDC_USDT_1
-        _initalizeWorldState(pools[1]);
+        _initalizeWorldState(pools[0]);
 
         // generate a not so random salt
         uint96 salt = uint96(block.timestamp);
@@ -287,7 +289,7 @@ contract PanopticFactoryTest is Test {
     function test_Fail_deployNewPool_UnsupportedPool() public {
         // tickSpacing on 1bps pools is 1, equal to the fee in bps
         // Panoptic only supports pools where TS is 2x the fee in bps
-        _initalizeWorldState(USDC_USDT_1);
+        _initalizeWorldState(USDC_WETH_1);
 
         vm.expectRevert(Errors.UniswapPoolNotSupported.selector);
         panopticFactory.deployNewPool(token0, token1, fee, 0);
